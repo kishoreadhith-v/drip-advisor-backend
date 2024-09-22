@@ -3,7 +3,7 @@ import hashlib
 from flask import Flask, jsonify, request
 import traceback
 from flask_cors import CORS
-from flask_jwt_extended import create_access_token, get_jwt_identity
+from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -19,6 +19,12 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+jwt = JWTManager(app)
+
+# JWT Configuration
+app.config['JWT_SECRET_KEY'] = "Raju bhai"
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(days=1)
+
 
 client = MongoClient(os.getenv('MONGO_URI'))
 db = client['dev']
@@ -227,7 +233,7 @@ def search_clothing():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-    
+
 # outfit routes ---
 
 
