@@ -2,3 +2,6 @@ Flask==3.0.3
 pymongo
 python-dotenv
 flask-cors
+google-generativeai
+Flask-JWT-Extended
+pillow
