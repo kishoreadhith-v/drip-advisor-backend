@@ -1,7 +1,9 @@
+import datetime
 import hashlib
 from flask import Flask, jsonify, request
 import traceback
 from flask_cors import CORS
+from flask_jwt_extended import create_access_token, get_jwt_identity
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -45,6 +47,7 @@ def test_get():
     return jsonify(userlist)
 
 # user authentication routes ---------------------
+# user signup route
 @app.route('/users/signup', methods=['POST'])
 def signup():
     try:
@@ -64,6 +67,81 @@ def signup():
         return jsonify({'message': 'User created successfully', 'id': str(result.inserted_id)})
     except Exception as e:
         return error_stack(str(e))
+    
+# user login route
+@app.route('/users/login', methods=['POST'])
+def login():
+    try:
+        email = request.json.get('email')
+        password = request.json.get('password')
+        password = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        user = db.users.find_one({'email': email, 'password': password})
+        if user:
+            access_token = create_access_token(identity=email)
+            return jsonify({'access_token': access_token})
+        else:
+            return jsonify({'error': 'Invalid credentials'}), 400
+    except Exception as e:
+        return error_stack(str(e))
+
+# get user profile
+@app.route('/users/profile', methods=['GET'])
+def profile():
+    email = email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if user:
+        user['_id'] = str(user['_id'])  
+        return jsonify(user)
+    else:
+        return jsonify({'error': 'User not found'}), 404
+
+# update user profile
+@app.route('/users/profile', methods=['PUT'])
+def update_profile():
+    email = email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    try:
+        update = {
+            'name': request.json.get('name'),
+            'gender': request.json.get('gender'),
+            'dob': request.json.get('dob'),
+        }
+        db.users.update_one({'email': email}, {'$set': update})
+        return jsonify({'message': 'Profile updated successfully'})
+    except Exception as e:
+        return error_stack(str(e))
+    
+# delete user profile
+@app.route('/users/profile', methods=['DELETE'])
+def delete_profile():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    try:
+        db.users.delete_one({'email': email})
+        return jsonify({'message': 'Profile deleted successfully'})
+    except Exception as e:
+        return error_stack(str(e))
+    
+# add user preferences
+@app.route('/users/preferences', methods=['POST'])
+def add_preferences():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    try:
+        preferences = request.json.get('preferences')
+        # add date and time to the preference as a string at the end of each
+        preferences = [preference + ' on ' + str(datetime.datetime.now()) for preference in preferences]
+        db.users.update_one({'email': email}, {'$push': {'preferences': {'$each': preferences}}})
+        return jsonify({'message': 'Preferences added successfully'})
+    except Exception as e:
+        return error_stack(str(e))
+
 
 # clothing item routes ---
 

@@ -19,9 +19,11 @@ Your Flask application is now available at http://localhost:3000.
 
 ### Drip Advisor Backend APIs and Features Checklist
 
-- [ ] User Registration API
-- [ ] User Login API
-- [ ] User Profile Management API
+- [X] User Registration API
+- [X] User Login API
+- [X] User Profile Management API
+- [X] User Logout API
+- [X] add user preferences API
 - [ ] User Authentication Middleware
 - [ ] Image Upload API
 - [ ] Image Metadata Extraction API
