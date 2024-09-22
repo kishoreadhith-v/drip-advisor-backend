@@ -3,7 +3,7 @@ import hashlib
 from flask import Flask, jsonify, request
 import traceback
 from flask_cors import CORS
-from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
+from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -94,6 +94,7 @@ def login():
 
 # get user profile
 @app.route('/users/profile', methods=['GET'])
+@jwt_required()
 def profile():
     email = email = get_jwt_identity()
     user = db.users.find_one({'email': email})
@@ -105,6 +106,7 @@ def profile():
 
 # update user profile
 @app.route('/users/profile', methods=['PUT'])
+@jwt_required()
 def update_profile():
     email = email = get_jwt_identity()
     user = db.users.find_one({'email': email})
@@ -123,6 +125,7 @@ def update_profile():
     
 # delete user profile
 @app.route('/users/profile', methods=['DELETE'])
+@jwt_required()
 def delete_profile():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
@@ -136,6 +139,7 @@ def delete_profile():
     
 # add user preferences
 @app.route('/users/preferences', methods=['POST'])
+@jwt_required()
 def add_preferences():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
@@ -153,6 +157,7 @@ def add_preferences():
 
 # clothing item routes ---
 @app.route('/add_clothing_item', methods=['POST'])
+@jwt_required()
 def add_clothing_item():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
