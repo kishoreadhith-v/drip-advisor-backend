@@ -1,3 +1,4 @@
+import hashlib
 from flask import Flask, jsonify, request
 import traceback
 from flask_cors import CORS
@@ -44,7 +45,25 @@ def test_get():
     return jsonify(userlist)
 
 # user authentication routes ---------------------
-
+@app.route('/users/signup', methods=['POST'])
+def signup():
+    try:
+        new_user = {
+            'email': request.json.get('email'),
+            'password': request.json.get('password'),
+            'name': request.json.get('name'),
+            'gender': request.json.get('gender'),
+            'dob': request.json.get('dob'),
+            'preferences': [],
+        }
+        new_user['password'] = hashlib.sha256(new_user['password'].encode("utf-8")).hexdigest()
+        existing_user = db.users.find_one({'email': new_user['email']})
+        if existing_user:
+            return jsonify({'error': 'User with email already exists'}), 400
+        result = db.users.insert_one(new_user)
+        return jsonify({'message': 'User created successfully', 'id': str(result.inserted_id)})
+    except Exception as e:
+        return error_stack(str(e))
 
 # clothing item routes ---
 
