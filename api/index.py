@@ -14,6 +14,10 @@ import json
 import io
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from apscheduler.schedulers.background import BackgroundScheduler
+import requests
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 load_dotenv()
 
@@ -240,6 +244,142 @@ def search_clothing():
     
 
 # outfit routes ---
+# generate outfit receommendation
+@app.route('/outfits/generate', methods=['GET'])
+@jwt_required()
+def generate_outfit():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    # get all clothing items from the database for the user which are available
+    clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
+    if not clothing_items:
+        return jsonify({'error': 'No clothing items found for user'}), 404
+    # sort the clothing items by frequency in increasing order
+    clothing_items.sort(key=lambda x: x['frequency'])
+    # get only the id, description and frequency of the clothing items
+    clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
+    # ask gemini for outfit recommendation
+    try:
+        model = genai.GenerativeModel("models/gemini-1.5-flash")
+        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items, read the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+        outfit_description = query_gemini(prompt)
+        # add user id to each outfit and save the outfit in the database
+        for outfit in outfit_description:
+            outfit['user_id'] = user['_id']
+            outfit['created_at'] = datetime.datetime.now()
+            db.outfits.insert_one(outfit)
+        # return the outfits with the outfit ids, sort by time and get first 3 outfits
+        outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
+        for outfit in outfits:
+            outfit['_id'] = str(outfit['_id'])
+        return jsonify(outfits)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+# build an outfit around a specific clothing item
+@app.route('/outfits/build/<clothing_item_id>', methods=['POST'])
+@jwt_required()
+def build_outfit(clothing_item_id):
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    base_item = db.clothing_items.find_one({'_id': clothing_item_id, 'user_id': user['_id']})
+    if not base_item:
+        return jsonify({'error': 'Base Clothing item not found'}), 404
+    # get all clothing items from the database for the user which are available
+    clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
+    if not clothing_items:
+        return jsonify({'error': 'No clothing items found for user'}), 404
+    # sort the clothing items by frequency in increasing order
+    clothing_items.sort(key=lambda x: x['frequency'])
+    # get only the id, description and frequency of the clothing items
+    clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
+    # ask gemini for outfit recommendation
+    try:
+        model = genai.GenerativeModel("models/gemini-1.5-flash")
+        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of this one, this one should be the base of outfits\n" + str(base_item) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+        outfit_description = query_gemini(prompt)
+        # add user id to each outfit and save the outfit in the database
+        for outfit in outfit_description:
+            outfit['user_id'] = user['_id']
+            outfit['created_at'] = datetime.datetime.now()
+            db.outfits.insert_one(outfit)
+        # return the outfits with the outfit ids, sort by time and get first 3 outfits
+        outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
+        for outfit in outfits:
+            outfit['_id'] = str(outfit['_id'])
+        return jsonify(outfits)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# get all outfits for the user
+@app.route('/outfits', methods=['GET'])
+@jwt_required()
+def get_outfits():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    outfits = list(db.outfits.find({'user_id': user['_id']}))
+    for outfit in outfits:
+        outfit['_id'] = str(outfit['_id'])
+    return jsonify(outfits)
+
+# get outfit by id
+@app.route('/outfits/<id>', methods=['GET'])
+@jwt_required() 
+def get_outfit(id):
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    outfit = db.outfits.find_one({'_id': id, 'user_id': user['_id']})
+    if not outfit:
+        return jsonify({'error': 'Outfit not found'}), 404
+    outfit['_id'] = str(outfit['_id'])
+    return jsonify(outfit)
+
+# Initialize the scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+def set_clothing_items_available(clothing_item_ids):
+    db.clothing_items.update_many(
+        {'_id': {'$in': clothing_item_ids}},
+        {'$set': {'available': True}}
+    )
+
+# use the outfit and set laundry timeout for the clothing items
+@app.route('/outfits/use/<id>', methods=['POST'])
+@jwt_required()
+def use_outfit(id):
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    outfit = db.outfits.find_one({'_id': id, 'user_id': user['_id']})
+    if not outfit:
+        return jsonify({'error': 'Outfit not found'}), 404
+    # get the clothing items in the outfit
+    clothing_items = list(db.clothing_items.find({'_id': {'$in': outfit['clothing_item_ids']}}))
+    clothing_item_ids = [item['_id'] for item in clothing_items]
+    # set the clothing items to unavailable and increase the frequency
+    for item in clothing_items:
+        db.clothing_items.update_one({'_id': item['_id']}, {'$set': {'available': False}, '$inc': {'frequency': 1}})
+    
+    # Schedule a job to set the clothing items back to available after a timeout (e.g., 48 hours)
+    scheduler.add_job(
+        set_clothing_items_available,
+        'date',
+        run_date=datetime.datetime.now() + datetime.timedelta(hours=48),
+        args=[clothing_item_ids]
+    )
+    
+    return jsonify({'message': 'Outfit used successfully'})
+
 
 
 # weather routes ---
