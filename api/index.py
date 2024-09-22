@@ -12,6 +12,8 @@ import os
 import re
 import json
 import io
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 load_dotenv()
 
@@ -144,13 +146,122 @@ def add_preferences():
 
 
 # clothing item routes ---
+@app.route('/add_clothing_item', methods=['POST'])
+def add_clothing_item():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+
+    image_file = request.files['image']
+
+    try:
+        # Open the image using PIL
+        image = Image.open(io.BytesIO(image_file.read()))
+
+        # Initialize Gemini model
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        # Generate content
+        response = model.generate_content([
+            "Describe this clothing item in a single, detailed sentence. Include color, style, material, and any distinctive features.",
+            image
+        ])
+
+        # Extract the description
+        description = response.text.strip()
+
+        # Create a new clothing item document
+        new_clothing_item = {
+            'description': description,
+            'image': image_file.filename,
+            'created_at': datetime.datetime.now()
+        }
+
+        # Insert the new clothing item into the database
+        result = db.clothing_items.insert_one(new_clothing_item)
+
+        return jsonify({'message': 'Clothing item added successfully', 'id': str(result.inserted_id)})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+        @app.route('/search_clothing', methods=['POST'])
+        def search_clothing():
+            description = request.json.get('description')
+            if not description:
+                return jsonify({"error": "Description is required"}), 400
+
+            try:
+                # Fetch all clothing items from the database
+                clothing_items = list(db.clothing_items.find())
+                if not clothing_items:
+                    return jsonify({"error": "No clothing items found"}), 404
+
+                # Extract descriptions
+                descriptions = [item['description'] for item in clothing_items]
+
+                # Use TF-IDF Vectorizer to convert descriptions to vectors
+                vectorizer = TfidfVectorizer().fit_transform(descriptions + [description])
+                vectors = vectorizer.toarray()
+
+                # Calculate cosine similarity between the input description and all clothing item descriptions
+                cosine_similarities = cosine_similarity([vectors[-1]], vectors[:-1]).flatten()
+
+                # Get the indices of the most similar descriptions
+                similar_indices = cosine_similarities.argsort()[-5:][::-1]
+
+                # Get the corresponding clothing items
+                similar_clothing_items = [clothing_items[i] for i in similar_indices]
+
+                # Return the IDs of the most similar clothing items
+                result = [{'id': str(item['_id']), 'description': item['description']} for item in similar_clothing_items]
+
+                return jsonify(result)
+
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
 
 
 # outfit routes ---
 
 
 # weather routes ---
+@app.route('/weather', methods=['GET'])
+def get_weather():
+    location = request.args.get('location')
+    if not location:
+        return jsonify({'error': 'Location parameter is required'}), 400
 
+    weather_api_key = os.getenv('WEATHER_API_KEY')
+    weather_url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={weather_api_key}&units=metric'
+
+    try:
+        response = requests.get(weather_url)
+        response.raise_for_status()
+        weather_data = response.json()
+
+        temperature = weather_data['main']['temp']
+        weather_description = weather_data['weather'][0]['description']
+
+        outfit_recommendation = get_outfit_recommendation(temperature, weather_description)
+
+        return jsonify({
+            'location': location,
+            'temperature': temperature,
+            'weather_description': weather_description,
+            'outfit_recommendation': outfit_recommendation
+        })
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': str(e)}), 500
+
+def get_outfit_recommendation(temperature, weather_description):
+    if temperature < 10:
+        return 'Wear a heavy coat, scarf, and gloves.'
+    elif 10 <= temperature < 20:
+        return 'Wear a light jacket or sweater.'
+    elif 20 <= temperature < 30:
+        return 'Wear a t-shirt and jeans.'
+    else:
+        return 'Wear shorts and a tank top.'
 
 # calendar routes ---
 
