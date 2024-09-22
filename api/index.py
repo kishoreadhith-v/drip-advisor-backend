@@ -148,6 +148,10 @@ def add_preferences():
 # clothing item routes ---
 @app.route('/add_clothing_item', methods=['POST'])
 def add_clothing_item():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
 
@@ -171,9 +175,12 @@ def add_clothing_item():
 
         # Create a new clothing item document
         new_clothing_item = {
+            'user_id': user['_id'],
             'description': description,
             'image': image_file.filename,
-            'created_at': datetime.datetime.now()
+            'created_at': datetime.datetime.now(),
+            'frequency': 0,
+            'available': True
         }
 
         # Insert the new clothing item into the database
@@ -184,43 +191,43 @@ def add_clothing_item():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-        @app.route('/search_clothing', methods=['POST'])
-        def search_clothing():
-            description = request.json.get('description')
-            if not description:
-                return jsonify({"error": "Description is required"}), 400
+@app.route('/search_clothing', methods=['POST'])
+def search_clothing():
+    description = request.json.get('description')
+    if not description:
+        return jsonify({"error": "Description is required"}), 400
 
-            try:
-                # Fetch all clothing items from the database
-                clothing_items = list(db.clothing_items.find())
-                if not clothing_items:
-                    return jsonify({"error": "No clothing items found"}), 404
+    try:
+        # Fetch all clothing items from the database
+        clothing_items = list(db.clothing_items.find())
+        if not clothing_items:
+            return jsonify({"error": "No clothing items found"}), 404
 
-                # Extract descriptions
-                descriptions = [item['description'] for item in clothing_items]
+        # Extract descriptions
+        descriptions = [item['description'] for item in clothing_items]
 
-                # Use TF-IDF Vectorizer to convert descriptions to vectors
-                vectorizer = TfidfVectorizer().fit_transform(descriptions + [description])
-                vectors = vectorizer.toarray()
+        # Use TF-IDF Vectorizer to convert descriptions to vectors
+        vectorizer = TfidfVectorizer().fit_transform(descriptions + [description])
+        vectors = vectorizer.toarray()
 
-                # Calculate cosine similarity between the input description and all clothing item descriptions
-                cosine_similarities = cosine_similarity([vectors[-1]], vectors[:-1]).flatten()
+        # Calculate cosine similarity between the input description and all clothing item descriptions
+        cosine_similarities = cosine_similarity([vectors[-1]], vectors[:-1]).flatten()
 
-                # Get the indices of the most similar descriptions
-                similar_indices = cosine_similarities.argsort()[-5:][::-1]
+        # Get the indices of the most similar descriptions
+        similar_indices = cosine_similarities.argsort()[-5:][::-1]
 
-                # Get the corresponding clothing items
-                similar_clothing_items = [clothing_items[i] for i in similar_indices]
+        # Get the corresponding clothing items
+        similar_clothing_items = [clothing_items[i] for i in similar_indices]
 
-                # Return the IDs of the most similar clothing items
-                result = [{'id': str(item['_id']), 'description': item['description']} for item in similar_clothing_items]
+        # Return the IDs of the most similar clothing items
+        result = [{'id': str(item['_id']), 'description': item['description']} for item in similar_clothing_items]
 
-                return jsonify(result)
+        return jsonify(result)
 
-            except Exception as e:
-                return jsonify({"error": str(e)}), 500
-
-
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    
 # outfit routes ---
 
 
