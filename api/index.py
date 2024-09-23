@@ -7,7 +7,7 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import google.generativeai as genai
-from PIL import Image # type: ignore
+from PIL import Image
 import os
 import re
 import json
@@ -252,28 +252,37 @@ def generate_outfit():
     user = db.users.find_one({'email': email})
     if not user:
         return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    
     # get all clothing items from the database for the user which are available
     clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
     if not clothing_items:
         return jsonify({'error': 'No clothing items found for user'}), 404
+    
     # sort the clothing items by frequency in increasing order
     clothing_items.sort(key=lambda x: x['frequency'])
-    # get only the id, description and frequency of the clothing items
+    
+    # get only the id, description, and frequency of the clothing items
     clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
+    
     # ask gemini for outfit recommendation
     try:
         model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items, read the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+        prompt = "You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations and the style of the clothing items. The output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items in the outfits, and additional styling tips. \n\n" + str(clothing_items)
         outfit_description = query_gemini(prompt)
+        
         # add user id to each outfit and save the outfit in the database
         for outfit in outfit_description:
             outfit['user_id'] = user['_id']
             outfit['created_at'] = datetime.datetime.now()
             db.outfits.insert_one(outfit)
+        
         # return the outfits with the outfit ids, sort by time and get first 3 outfits
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
+        
+        # convert ObjectId to string in each outfit
         for outfit in outfits:
             outfit['_id'] = str(outfit['_id'])
+        
         return jsonify(outfits)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
