@@ -16,8 +16,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+# from sklearn.feature_extraction.text import TfidfVectorizer
+# from sklearn.metrics.pairwise import cosine_similarity
 
 load_dotenv()
 
