@@ -245,6 +245,19 @@ def search_clothing():
 
 # outfit routes ---
 # generate outfit receommendation
+from bson import ObjectId
+
+# Helper function to recursively convert ObjectId fields to strings
+def convert_objectid(data):
+    if isinstance(data, list):
+        return [convert_objectid(item) for item in data]
+    elif isinstance(data, dict):
+        return {key: convert_objectid(value) for key, value in data.items()}
+    elif isinstance(data, ObjectId):
+        return str(data)
+    else:
+        return data
+
 @app.route('/outfits/generate', methods=['GET'])
 @jwt_required()
 def generate_outfit():
@@ -279,9 +292,8 @@ def generate_outfit():
         # return the outfits with the outfit ids, sort by time and get first 3 outfits
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
         
-        # convert ObjectId to string in each outfit
-        for outfit in outfits:
-            outfit['_id'] = str(outfit['_id'])
+        # recursively convert ObjectId fields to strings
+        outfits = convert_objectid(outfits)
         
         return jsonify(outfits)
     except Exception as e:
