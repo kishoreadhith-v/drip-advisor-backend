@@ -6,6 +6,3 @@ google-generativeai
 Flask-JWT-Extended
 pillow
 apscheduler
-requests
-scikit-learn
-scipy
