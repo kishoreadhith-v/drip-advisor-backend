@@ -16,6 +16,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
+from bson import ObjectId
+
 # from sklearn.feature_extraction.text import TfidfVectorizer
 # from sklearn.metrics.pairwise import cosine_similarity
 
@@ -206,47 +208,6 @@ def add_clothing_item():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/search_clothing', methods=['POST'])
-def search_clothing():
-    description = request.json.get('description')
-    if not description:
-        return jsonify({"error": "Description is required"}), 400
-
-    try:
-        # Fetch all clothing items from the database
-        clothing_items = list(db.clothing_items.find())
-        if not clothing_items:
-            return jsonify({"error": "No clothing items found"}), 404
-
-        # Extract descriptions
-        descriptions = [item['description'] for item in clothing_items]
-
-        # Use TF-IDF Vectorizer to convert descriptions to vectors
-        vectorizer = TfidfVectorizer().fit_transform(descriptions + [description])
-        vectors = vectorizer.toarray()
-
-        # Calculate cosine similarity between the input description and all clothing item descriptions
-        cosine_similarities = cosine_similarity([vectors[-1]], vectors[:-1]).flatten()
-
-        # Get the indices of the most similar descriptions
-        similar_indices = cosine_similarities.argsort()[-5:][::-1]
-
-        # Get the corresponding clothing items
-        similar_clothing_items = [clothing_items[i] for i in similar_indices]
-
-        # Return the IDs of the most similar clothing items
-        result = [{'id': str(item['_id']), 'description': item['description']} for item in similar_clothing_items]
-
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-
-# outfit routes ---
-# generate outfit receommendation
-from bson import ObjectId
-
 # Helper function to recursively convert ObjectId fields to strings
 def convert_objectid(data):
     if isinstance(data, list):
@@ -258,46 +219,83 @@ def convert_objectid(data):
     else:
         return data
 
-@app.route('/outfits/generate', methods=['GET'])
+@app.route('/outfits/generate/<location>', methods=['GET'])
 @jwt_required()
-def generate_outfit():
+def generate_outfit(location):
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
+    
     if not user:
         return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
     
-    # get all clothing items from the database for the user which are available
+    # Fetch all available clothing items for the user
     clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
+    
     if not clothing_items:
         return jsonify({'error': 'No clothing items found for user'}), 404
     
-    # sort the clothing items by frequency in increasing order
+    # Sort clothing items by frequency (ascending)
     clothing_items.sort(key=lambda x: x['frequency'])
     
-    # get only the id, description, and frequency of the clothing items
+    # Extract id, description, and frequency fields for each clothing item
     clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
     
-    # ask gemini for outfit recommendation
+    # Ensure location is provided
+    if not location:
+        return jsonify({'error': 'Location is required'}), 400
+    
+    weather_api_key = os.getenv('OPENWEATHERMAP_API_KEY')
+    weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={weather_api_key}&units=metric"
+    
+    try:
+        weather_response = requests.get(weather_url)
+        weather_data = weather_response.json()
+        print(weather_data)
+        
+        if weather_response.status_code != 200:
+            return jsonify({'error': 'Failed to get weather data'}), 500
+        
+        weather_description = weather_data['weather'][0]['description']
+        temperature = weather_data['main']['temp']
+        
+    except Exception as e:
+        return jsonify({'error': f'Weather API error: {str(e)}'}), 500
+    
+    # Use Gemini to generate outfit recommendations
     try:
         model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = "You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations and the style of the clothing items. The output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items in the outfits, and additional styling tips. \n\n" + str(clothing_items)
+        prompt = (
+            "You are a fashion expert. Generate an outfit recommendation based on the following clothing items. "
+            "Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind "
+            "the color combinations, the style of the clothing items, and the current weather conditions. "
+            "The weather is described as follows: {weather_description} with a temperature of {temperature}°C. "
+            "The output should contain a JSON array, with each object having one outfit. Each outfit object should have "
+            "a name, description, list of ids of clothing items in the outfits, and additional styling tips. \n\n"
+            + str(clothing_items)
+        ).format(weather_description=weather_description, temperature=temperature)
+        
         outfit_description = query_gemini(prompt)
         
-        # add user id to each outfit and save the outfit in the database
+        # Validate that outfit_description is a list and contains valid items
+        if not isinstance(outfit_description, list) or not all('id' in outfit for outfit in outfit_description):
+            return jsonify({'error': 'Invalid outfit data returned from Gemini'}), 500
+        
+        # Save each generated outfit to the database
         for outfit in outfit_description:
             outfit['user_id'] = user['_id']
             outfit['created_at'] = datetime.datetime.now()
             db.outfits.insert_one(outfit)
         
-        # return the outfits with the outfit ids, sort by time and get first 3 outfits
+        # Fetch the latest 3 outfits for the user
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
         
-        # recursively convert ObjectId fields to strings
+        # Convert ObjectId fields to strings
         outfits = convert_objectid(outfits)
         
         return jsonify(outfits)
+    
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Gemini model error: {str(e)}'}), 500
     
 # build an outfit around a specific clothing item
 @app.route('/outfits/build/<clothing_item_id>', methods=['POST'])
@@ -400,49 +398,6 @@ def use_outfit(id):
     )
     
     return jsonify({'message': 'Outfit used successfully'})
-
-
-
-# weather routes ---
-@app.route('/weather', methods=['GET'])
-def get_weather():
-    location = request.args.get('location')
-    if not location:
-        return jsonify({'error': 'Location parameter is required'}), 400
-
-    weather_api_key = os.getenv('WEATHER_API_KEY')
-    weather_url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={weather_api_key}&units=metric'
-
-    try:
-        response = requests.get(weather_url)
-        response.raise_for_status()
-        weather_data = response.json()
-
-        temperature = weather_data['main']['temp']
-        weather_description = weather_data['weather'][0]['description']
-
-        outfit_recommendation = get_outfit_recommendation(temperature, weather_description)
-
-        return jsonify({
-            'location': location,
-            'temperature': temperature,
-            'weather_description': weather_description,
-            'outfit_recommendation': outfit_recommendation
-        })
-    except requests.exceptions.RequestException as e:
-        return jsonify({'error': str(e)}), 500
-
-def get_outfit_recommendation(temperature, weather_description):
-    if temperature < 10:
-        return 'Wear a heavy coat, scarf, and gloves.'
-    elif 10 <= temperature < 20:
-        return 'Wear a light jacket or sweater.'
-    elif 20 <= temperature < 30:
-        return 'Wear a t-shirt and jeans.'
-    else:
-        return 'Wear shorts and a tank top.'
-
-# calendar routes ---
 
 
 # gemini prompt and parse json response
