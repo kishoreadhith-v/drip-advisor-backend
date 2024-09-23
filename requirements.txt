@@ -8,3 +8,4 @@ pillow
 apscheduler
 requests
 scikit-learn
+scipy
