@@ -207,6 +207,43 @@ def add_clothing_item():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+from bson import ObjectId
+from flask import jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+# Helper function to recursively convert ObjectId fields to strings
+def convert_objectid_to_str(item):
+    if isinstance(item, dict):
+        for key, value in item.items():
+            if isinstance(value, ObjectId):
+                item[key] = str(value)
+            elif isinstance(value, dict):
+                convert_objectid_to_str(value)
+            elif isinstance(value, list):
+                item[key] = [convert_objectid_to_str(v) if isinstance(v, (ObjectId, dict, list)) else v for v in value]
+    elif isinstance(item, list):
+        item = [convert_objectid_to_str(i) if isinstance(i, (ObjectId, dict, list)) else i for i in item]
+    return item
+
+@app.route('/clothing_items', methods=['GET'])
+@jwt_required()
+def get_clothing_item():
+    print('start')
+    email = get_jwt_identity()
+    clothing_item_id = request.json.get('clothing_item_id')
+    print(clothing_item_id)
+    
+    # Find the clothing item by its ID
+    item = db.clothing_items.find_one({'_id': ObjectId(clothing_item_id)})
+    print(item)
+    if not item:
+        return jsonify({'error': 'Clothing item not found'}), 404
+    
+    # Convert the ObjectId fields to strings
+    item = convert_objectid_to_str(item)
+    print(item)
+    return jsonify(item)
 
 # Helper function to recursively convert ObjectId fields to strings
 def convert_objectid(data):
@@ -219,9 +256,11 @@ def convert_objectid(data):
     else:
         return data
 
-@app.route('/outfits/generate/<location>', methods=['GET'])
+from bson import ObjectId  # Import ObjectId to convert string IDs to ObjectId type
+
+@app.route('/outfits/generate', methods=['POST'])
 @jwt_required()
-def generate_outfit(location):
+def generate_outfit():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
     
@@ -240,74 +279,75 @@ def generate_outfit(location):
     # Extract id, description, and frequency fields for each clothing item
     clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
     
-    # Ensure location is provided
-    if not location:
-        return jsonify({'error': 'Location is required'}), 400
-    
-    weather_api_key = os.getenv('OPENWEATHERMAP_API_KEY')
-    weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={weather_api_key}&units=metric"
-    
-    try:
-        weather_response = requests.get(weather_url)
-        weather_data = weather_response.json()
-        print(weather_data)
-        
-        if weather_response.status_code != 200:
-            return jsonify({'error': 'Failed to get weather data'}), 500
-        
-        weather_description = weather_data['weather'][0]['description']
-        temperature = weather_data['main']['temp']
-        
-    except Exception as e:
-        return jsonify({'error': f'Weather API error: {str(e)}'}), 500
+    # Get weather data from the request
+    weather_description = request.json.get('weather_description')
+    day_description = request.json.get('day_description')
+    preferences = str(user['preferences'])
+    temperature = request.json.get('temperature')
+
+    if not weather_description or temperature is None:
+        return jsonify({'error': 'Weather description and temperature are required'}), 400
     
     # Use Gemini to generate outfit recommendations
     try:
-        model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = (
-            "You are a fashion expert. Generate an outfit recommendation based on the following clothing items. "
-            "Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind "
-            "the color combinations, the style of the clothing items, and the current weather conditions. "
-            "The weather is described as follows: {weather_description} with a temperature of {temperature}°C. "
-            "The output should contain a JSON array, with each object having one outfit. Each outfit object should have "
-            "a name, description, list of ids of clothing items in the outfits, and additional styling tips. \n\n"
-            + str(clothing_items)
-        ).format(weather_description=weather_description, temperature=temperature)
+        prompt = f"You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations, the style of the clothing items, and the current weather conditions. The weather is described as follows: {weather_description} with a temperature of {temperature}°C. The user describes their day as follows: {day_description}. And the user has the following preferences: {preferences}. The output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids`) in the outfits, and additional styling tips. \n\n"
+        
+        prompt += str(clothing_items)
         
         outfit_description = query_gemini(prompt)
-        
-        # Validate that outfit_description is a list and contains valid items
-        if not isinstance(outfit_description, list) or not all('id' in outfit for outfit in outfit_description):
-            return jsonify({'error': 'Invalid outfit data returned from Gemini'}), 500
-        
-        # Save each generated outfit to the database
+
+        # Add user id to each outfit and save the outfit in the database
         for outfit in outfit_description:
             outfit['user_id'] = user['_id']
             outfit['created_at'] = datetime.datetime.now()
             db.outfits.insert_one(outfit)
         
-        # Fetch the latest 3 outfits for the user
+        # Return the outfits with the outfit ids, sort by time and get first 3 outfits
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
+
+        # Get the item from the item id and add it to the outfit
+        for outfit in outfits:
+            outfit['_id'] = str(outfit['_id'])
+            clothing_item_ids = outfit.get('clothing_item_ids', [])
+            
+            # Ensure the clothing_item_ids are converted to ObjectId format before querying the database
+            object_ids = [ObjectId(item_id) for item_id in clothing_item_ids if ObjectId.is_valid(item_id)]
+            
+            if object_ids:
+                clothing_items_list = list(db.clothing_items.find({'_id': {'$in': object_ids}}))
+                outfit['clothing_items_list'] = clothing_items_list if clothing_items_list else []
+                
+                # Convert the ObjectId of each clothing item to string
+                for item in outfit['clothing_items_list']:
+                    item['_id'] = str(item['_id'])
         
-        # Convert ObjectId fields to strings
+        # Recursively convert ObjectId fields to strings
         outfits = convert_objectid(outfits)
         
         return jsonify(outfits)
-    
     except Exception as e:
-        return jsonify({'error': f'Gemini model error: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
+
+# Helper function to convert ObjectId fields to strings recursively
+def convert_objectid(data):
+    if isinstance(data, list):
+        return [convert_objectid(item) for item in data]
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, ObjectId):
+                data[key] = str(value)
+            elif isinstance(value, (list, dict)):
+                data[key] = convert_objectid(value)
+    return data
     
 # build an outfit around a specific clothing item
-@app.route('/outfits/build/<clothing_item_id>', methods=['POST'])
+@app.route('/outfits/build', methods=['POST'])
 @jwt_required()
-def build_outfit(clothing_item_id):
+def build_outfit():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
     if not user:
         return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
-    base_item = db.clothing_items.find_one({'_id': clothing_item_id, 'user_id': user['_id']})
-    if not base_item:
-        return jsonify({'error': 'Base Clothing item not found'}), 404
     # get all clothing items from the database for the user which are available
     clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
     if not clothing_items:
@@ -316,10 +356,25 @@ def build_outfit(clothing_item_id):
     clothing_items.sort(key=lambda x: x['frequency'])
     # get only the id, description and frequency of the clothing items
     clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
+
+    # Get weather data from the request
+    weather_description = request.json.get('weather_description')
+    day_description = request.json.get('day_description')
+    preferences = str(user['preferences'])
+    temperature = request.json.get('temperature')
+    base_items_ids = request.json.get('base_items_ids')
+    base_items = list(db.clothing_items.find({'_id': {'$in': base_items_ids}}))
+    if not base_items:
+        return jsonify({'error': 'Base Clothing item not found'}), 404
+
+    if not weather_description or temperature is None:
+        return jsonify({'error': 'Weather description and temperature are required'}), 400
+    
     # ask gemini for outfit recommendation
     try:
-        model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of this one, this one should be the base of outfits\n" + str(base_item) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+        # model = genai.GenerativeModel("models/gemini-1.5-flash")
+        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of these items, these items should be the base of outfits\n" + str(base_items) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the user has the following preferences:" + preferences + " and the day's weather is as follows: " + day_description + "Consider all of these factors and the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+
         outfit_description = query_gemini(prompt)
         # add user id to each outfit and save the outfit in the database
         for outfit in outfit_description:
