@@ -279,7 +279,7 @@ def generate_outfit():
     # Extract id, description, and frequency fields for each clothing item
     clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
     
-    # Get weather data from the request
+    # Get data from the request
     weather_description = request.json.get('weather_description')
     day_description = request.json.get('day_description')
     preferences = str(user['preferences'])
@@ -363,7 +363,11 @@ def build_outfit():
     preferences = str(user['preferences'])
     temperature = request.json.get('temperature')
     base_items_ids = request.json.get('base_items_ids')
-    base_items = list(db.clothing_items.find({'_id': {'$in': base_items_ids}}))
+    # Convert base_items_ids to ObjectId
+    base_items_object_ids = [ObjectId(item_id) for item_id in base_items_ids if ObjectId.is_valid(item_id)]
+    
+    # Fetch base items from the database
+    base_items = list(db.clothing_items.find({'_id': {'$in': base_items_object_ids}}))
     if not base_items:
         return jsonify({'error': 'Base Clothing item not found'}), 404
 
@@ -383,8 +387,7 @@ def build_outfit():
             db.outfits.insert_one(outfit)
         # return the outfits with the outfit ids, sort by time and get first 3 outfits
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
-        for outfit in outfits:
-            outfit['_id'] = str(outfit['_id'])
+        outfits = convert_objectid(outfits)
         return jsonify(outfits)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
