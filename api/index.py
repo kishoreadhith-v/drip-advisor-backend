@@ -245,6 +245,18 @@ def get_clothing_item():
     # print(item)
     return jsonify(item)
 
+# get all clothing items for the user
+@app.route('/wardrobe', methods=['GET'])
+@jwt_required()
+def get_wardrobe():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    clothing_items = list(db.clothing_items.find({'user_id': user['_id']}))
+    clothing_items = convert_objectid_to_str(clothing_items)
+    return jsonify(clothing_items)
+
 # Helper function to recursively convert ObjectId fields to strings
 def convert_objectid(data):
     if isinstance(data, list):
@@ -445,6 +457,22 @@ def get_outfits():
     outfits = list(db.outfits.find({'user_id': user['_id']}))
     for outfit in outfits:
         outfit['_id'] = str(outfit['_id'])
+        clothing_item_ids = outfit.get('clothing_item_ids', [])
+        
+        # Ensure the clothing_item_ids are converted to ObjectId format before querying the database
+        object_ids = [ObjectId(item_id) for item_id in clothing_item_ids if ObjectId.is_valid(item_id)]
+        
+        if object_ids:
+            clothing_items_list = list(db.clothing_items.find({'_id': {'$in': object_ids}}))
+            outfit['clothing_items_list'] = clothing_items_list if clothing_items_list else []
+            
+            # Convert the ObjectId of each clothing item to string
+            for item in outfit['clothing_items_list']:
+                item['_id'] = str(item['_id'])
+    
+    # Recursively convert ObjectId fields to strings
+    outfits = convert_objectid(outfits)
+    
     return jsonify(outfits)
 
 # get outfit by id
@@ -455,10 +483,26 @@ def get_outfit(id):
     user = db.users.find_one({'email': email})
     if not user:
         return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
-    outfit = db.outfits.find_one({'_id': id, 'user_id': user['_id']})
+    outfit = db.outfits.find_one({'_id': ObjectId(id), 'user_id': user['_id']})
     if not outfit:
         return jsonify({'error': 'Outfit not found'}), 404
+    
     outfit['_id'] = str(outfit['_id'])
+    clothing_item_ids = outfit.get('clothing_item_ids', [])
+    
+    # Ensure the clothing_item_ids are converted to ObjectId format before querying the database
+    object_ids = [ObjectId(item_id) for item_id in clothing_item_ids if ObjectId.is_valid(item_id)]
+    
+    if object_ids:
+        clothing_items_list = list(db.clothing_items.find({'_id': {'$in': object_ids}}))
+        outfit['clothing_items_list'] = clothing_items_list if clothing_items_list else []
+        
+        # Convert the ObjectId of each clothing item to string
+        for item in outfit['clothing_items_list']:
+            item['_id'] = str(item['_id'])
+    
+    outfit = convert_objectid(outfit)
+
     return jsonify(outfit)
 
 # Initialize the scheduler
@@ -475,30 +519,37 @@ def set_clothing_items_available(clothing_item_ids):
 @app.route('/outfits/use/<id>', methods=['POST'])
 @jwt_required()
 def use_outfit(id):
-    email = get_jwt_identity()
-    user = db.users.find_one({'email': email})
-    if not user:
-        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
-    outfit = db.outfits.find_one({'_id': id, 'user_id': user['_id']})
-    if not outfit:
-        return jsonify({'error': 'Outfit not found'}), 404
-    # get the clothing items in the outfit
-    clothing_items = list(db.clothing_items.find({'_id': {'$in': outfit['clothing_item_ids']}}))
-    clothing_item_ids = [item['_id'] for item in clothing_items]
-    # set the clothing items to unavailable and increase the frequency
-    for item in clothing_items:
-        db.clothing_items.update_one({'_id': item['_id']}, {'$set': {'available': False}, '$inc': {'frequency': 1}})
-    
-    # Schedule a job to set the clothing items back to available after a timeout (e.g., 48 hours)
-    scheduler.add_job(
-        set_clothing_items_available,
-        'date',
-        run_date=datetime.datetime.now() + datetime.timedelta(hours=48),
-        args=[clothing_item_ids]
-    )
-    
-    return jsonify({'message': 'Outfit used successfully'})
+    try:
+        email = get_jwt_identity()
+        user = db.users.find_one({'email': email})
+        if not user:
+            return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+        outfit = db.outfits.find_one({'_id': ObjectId(id), 'user_id': user['_id']})
+        if not outfit:
+            return jsonify({'error': 'Outfit not found'}), 404
+        # get the clothing items in the outfit
+        clothing_item_ids = [ObjectId(cid) for cid in outfit.get('clothing_item_ids', [])]
+        if not clothing_item_ids:
+            return jsonify({'error': 'No clothing items found in the outfit'}), 404
+        
+        clothing_items = list(db.clothing_items.find({'_id': {'$in': clothing_item_ids}}))
+        # set the clothing items to unavailable and increase the frequency
+        for item in clothing_items:
+            db.clothing_items.update_one({'_id': item['_id']}, {'$set': {'available': False}, '$inc': {'frequency': 1}})
+        
+        # Schedule a job to set the clothing items back to available after a timeout (e.g., 48 hours)
+        scheduler.add_job(
+            set_clothing_items_available,
+            'date',
+            run_date=datetime.datetime.now() + datetime.timedelta(hours=48),
+            args=[clothing_item_ids]
+        )
+        
+        return jsonify({'message': 'Outfit used successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
+#####################
 
 # gemini prompt and parse json response
 def query_gemini(prompt):
