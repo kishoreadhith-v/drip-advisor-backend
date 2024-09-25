@@ -173,6 +173,7 @@ def add_clothing_item():
         return jsonify({"error": "No image file provided"}), 400
 
     image_file = request.files['image']
+    path = request.json.get('path')
 
     try:
         # Open the image using PIL
@@ -195,6 +196,7 @@ def add_clothing_item():
             'user_id': user['_id'],
             'description': description,
             'image': image_file.filename,
+            'path': path,
             'created_at': datetime.datetime.now(),
             'frequency': 0,
             'available': True
