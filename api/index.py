@@ -229,20 +229,20 @@ def convert_objectid_to_str(item):
 @app.route('/clothing_items', methods=['GET'])
 @jwt_required()
 def get_clothing_item():
-    print('start')
+    # print('start')
     email = get_jwt_identity()
     clothing_item_id = request.json.get('clothing_item_id')
-    print(clothing_item_id)
+    # print(clothing_item_id)
     
     # Find the clothing item by its ID
     item = db.clothing_items.find_one({'_id': ObjectId(clothing_item_id)})
-    print(item)
+    # print(item)
     if not item:
         return jsonify({'error': 'Clothing item not found'}), 404
     
     # Convert the ObjectId fields to strings
     item = convert_objectid_to_str(item)
-    print(item)
+    # print(item)
     return jsonify(item)
 
 # Helper function to recursively convert ObjectId fields to strings
@@ -288,9 +288,21 @@ def generate_outfit():
     if not weather_description or temperature is None:
         return jsonify({'error': 'Weather description and temperature are required'}), 400
     
+    # Collect user's age and gender from the database
+    user_dob = user.get('dob')
+    if not user_dob:
+        return jsonify({'error': 'User date of birth is required'}), 400
+    # Calculate user's age
+    user_dob = datetime.datetime.strptime(user_dob, '%Y-%m-%d')
+    user_age = (datetime.datetime.now() - user_dob).days // 365
+    user_gender = user.get('gender')
+    if not user_dob or not user_gender:
+        return jsonify({'error': 'User date of birth and gender are required'}), 400
+    
+
     # Use Gemini to generate outfit recommendations
     try:
-        prompt = f"You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations, the style of the clothing items, and the current weather conditions. The weather is described as follows: {weather_description} with a temperature of {temperature}°C. The user describes their day as follows: {day_description}. And the user has the following preferences: {preferences}. The output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids`) in the outfits, and additional styling tips. \n\n"
+        prompt = f"You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations, the style of the clothing items, and the current weather conditions. The weather is described as follows: {weather_description} with a temperature of {temperature}°C. The user describes their day as follows: {day_description}. And the user has the following preferences: {preferences}. The user is " + str(user_age) + " years old and their gender is " + user_gender + ". Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids`) in the outfits, and additional styling tips. \n\n"
         
         prompt += str(clothing_items)
         
@@ -363,6 +375,20 @@ def build_outfit():
     preferences = str(user['preferences'])
     temperature = request.json.get('temperature')
     base_items_ids = request.json.get('base_items_ids')
+
+    # Collect user's age and gender from the database
+    user_dob = user.get('dob')
+    if not user_dob:
+        return jsonify({'error': 'User date of birth is required'}), 400
+    # Calculate user's age
+    user_dob = datetime.datetime.strptime(user_dob, '%Y-%m-%d')
+    user_age = (datetime.datetime.now() - user_dob).days // 365
+    user_gender = user.get('gender')
+    if not user_dob or not user_gender:
+        return jsonify({'error': 'User date of birth and gender are required'}), 400
+    
+    # print("helo",user_age, user_gender, user_dob)
+
     # Convert base_items_ids to ObjectId
     base_items_object_ids = [ObjectId(item_id) for item_id in base_items_ids if ObjectId.is_valid(item_id)]
     
@@ -377,7 +403,8 @@ def build_outfit():
     # ask gemini for outfit recommendation
     try:
         # model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of these items, these items should be the base of outfits\n" + str(base_items) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the user has the following preferences:" + preferences + " and the day's weather is as follows: " + day_description + "Consider all of these factors and the output should contain a json array, with each object having one outfit. each outfit object should have a name, description, list of ids of clothing items in the outfits and additional styling tips. \n\n" + str(clothing_items)
+        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of these items, these items should be the base of outfits\n" + str(base_items) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the user has the following preferences:" + preferences + " and the day's weather is as follows: " + day_description + ". The user is " + str(user_age) + " years old and their gender is " + user_gender + ".Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids` and contain atleast one clothing item plus the base item) in the outfits, and additional styling tips. \n\n" + str(clothing_items)
+
 
         outfit_description = query_gemini(prompt)
         # add user id to each outfit and save the outfit in the database
@@ -387,6 +414,21 @@ def build_outfit():
             db.outfits.insert_one(outfit)
         # return the outfits with the outfit ids, sort by time and get first 3 outfits
         outfits = list(db.outfits.find({'user_id': user['_id']}).sort('created_at', -1).limit(3))
+
+        # get the item from the item id and add it to the outfit
+        for outfit in outfits:
+            outfit['_id'] = str(outfit['_id'])
+            clothing_item_ids = outfit.get('clothing_item_ids', [])
+            # ensure the clothing_item_ids are converted to ObjectId format before querying the database
+            object_ids = [ObjectId(item_id) for item_id in clothing_item_ids if ObjectId.is_valid(item_id)]
+            if object_ids:
+                clothing_items_list = list(db.clothing_items.find({'_id': {'$in': object_ids}}))
+                outfit['clothing_items_list'] = clothing_items_list if clothing_items_list else []
+                # convert the ObjectId of each clothing item to string
+                for item in outfit['clothing_items_list']:
+                    item['_id'] = str(item['_id'])
+
+        
         outfits = convert_objectid(outfits)
         return jsonify(outfits)
     except Exception as e:
