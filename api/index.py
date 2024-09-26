@@ -265,6 +265,23 @@ def get_wardrobe():
     clothing_items = convert_objectid_to_str(clothing_items)
     return jsonify(clothing_items)
 
+# set a clothing item as available
+@app.route('/clothing_items/available', methods=['PUT'])
+@jwt_required()
+def set_available():
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    clothing_item_id = request.json.get('clothing_item_id')
+    if not clothing_item_id:
+        return jsonify({'error': 'clothing_item_id is required'}), 400
+    try:
+        db.clothing_items.update_one({'_id': ObjectId(clothing_item_id), 'user_id': user['_id']}, {'$set': {'available': True}})
+        return jsonify({'message': 'Clothing item set as available successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 # Helper function to recursively convert ObjectId fields to strings
 def convert_objectid(data):
     if isinstance(data, list):
