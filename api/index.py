@@ -269,6 +269,41 @@ def get_wardrobe():
 @app.route('/clothing_items/available', methods=['PUT'])
 @jwt_required()
 def set_available():
+    if request.content_type != 'application/json':
+        return jsonify({'error': "Content-Type must be 'application/json'"}), 415
+
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+
+    clothing_item_id = request.json.get('clothing_item_id')
+    if not clothing_item_id:
+        return jsonify({'error': 'clothing_item_id is required'}), 400
+
+    try:
+        # Debugging: Print the query and update operation
+        print(f"Updating clothing item with ID: {clothing_item_id} for user ID: {user['_id']}")
+        
+        result = db.clothing_items.update_one(
+            {'_id': ObjectId(clothing_item_id), 'user_id': user['_id']},
+            {'$set': {'available': True}}
+        )
+        
+        # Debugging: Print the result of the update operation
+        print(f"Matched count: {result.matched_count}, Modified count: {result.modified_count}")
+        
+        if result.matched_count == 0:
+            return jsonify({'error': 'Clothing item not found or not owned by user'}), 404
+        
+        return jsonify({'message': 'Clothing item set as available successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+# delete a clothing item
+@app.route('/clothing_items/delete', methods=['DELETE'])
+@jwt_required()
+def delete_clothing_item():
     email = get_jwt_identity()
     user = db.users.find_one({'email': email})
     if not user:
@@ -277,8 +312,8 @@ def set_available():
     if not clothing_item_id:
         return jsonify({'error': 'clothing_item_id is required'}), 400
     try:
-        db.clothing_items.update_one({'_id': ObjectId(clothing_item_id), 'user_id': user['_id']}, {'$set': {'available': True}})
-        return jsonify({'message': 'Clothing item set as available successfully'})
+        db.clothing_items.delete_one({'_id': ObjectId(clothing_item_id), 'user_id': user['_id']})
+        return jsonify({'message': 'Clothing item deleted successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     
