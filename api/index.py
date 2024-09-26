@@ -155,7 +155,7 @@ def add_preferences():
         preferences = request.json.get('preferences')
         # add date and time to the preference as a string at the end of each
         preferences = [preference + ' on ' + str(datetime.datetime.now()) for preference in preferences]
-        db.users.update_one({'email': email}, {'$push': {'preferences': {'$each': preferences}}})
+        db.users.update_one({'email': email}, {'$set': {'preferences': preferences}})
         return jsonify({'message': 'Preferences added successfully'})
     except Exception as e:
         return error_stack(str(e))
