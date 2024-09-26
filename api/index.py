@@ -316,7 +316,7 @@ def generate_outfit():
 
     # Use Gemini to generate outfit recommendations
     try:
-        prompt = f"You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations, the style of the clothing items, and the current weather conditions. The weather is described as follows: {weather_description} with a temperature of {temperature}°C. The user describes their day as follows: {day_description}. And the user has the following preferences: {preferences}. The user is " + str(user_age) + " years old and their gender is " + user_gender + ". Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids`) in the outfits, and additional styling tips. \n\n"
+        prompt = f"You are a fashion expert. Generate an outfit recommendation based on the following clothing items. Read the description of each item and generate 3 different outfits from them. Make sure to keep in mind the color combinations, the style of the clothing items, and the current weather conditions. The weather is described as follows: {weather_description} with a temperature of {temperature}°C. The user describes their day as follows: {day_description}. And the user has the following preferences: {preferences}. The user is " + str(user_age) + " years old and their gender is " + user_gender + ". In the outfit: max number of shirts is 1 and max number of pants is 1. there can be any number of accessories if it exists. Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids`) in the outfits, and additional styling tips. \n\n"
         
         prompt += str(clothing_items)
         
@@ -417,7 +417,7 @@ def build_outfit():
     # ask gemini for outfit recommendation
     try:
         # model = genai.GenerativeModel("models/gemini-1.5-flash")
-        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of these items, these items should be the base of outfits\n" + str(base_items) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the user has the following preferences:" + preferences + " and the day's weather is as follows: " + day_description + ". The user is " + str(user_age) + " years old and their gender is " + user_gender + ".Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids` and contain atleast one clothing item plus the base item) in the outfits, and additional styling tips. \n\n" + str(clothing_items)
+        prompt = "You are a fashion expert, Generate an outfit recommendation based on the following clothing items. the outfits you generate should all consist of these items, these items should be the base of outfits\n" + str(base_items) + "\n\nread the description of each item and generate 3 different outfits from them. make sure to keep in mind the color combinations and the style of the clothing items. the user has the following preferences:" + preferences + " and the day's weather is as follows: " + day_description + ". The user is " + str(user_age) + " years old and their gender is " + user_gender + ". In the outfit: max number of shirts is 1 and max number of pants is 1. there can be any number of accessories if it exists. Consider all of these factors and the output should contain a JSON array, with each object having one outfit. Each outfit object should have a name, description, list of ids of clothing items (the field should be named `clothing_item_ids` and contain atleast one clothing item plus the base item) in the outfits, and additional styling tips. \n\n" + str(clothing_items)
 
 
         outfit_description = query_gemini(prompt)
@@ -581,8 +581,35 @@ def query_gemini(prompt):
         return {"error": "No JSON found in response"}
 
 @app.route('/gemini', methods=['POST'])
+@jwt_required()
 def ask_gemini():
-    prompt = request.json.get('prompt')
+    email = get_jwt_identity()
+    user = db.users.find_one({'email': email})
+    
+    if not user:
+        return jsonify({'error': 'User must be logged in, please log in to use this api'}), 404
+    
+    # Fetch all available clothing items for the user
+    clothing_items = list(db.clothing_items.find({'user_id': user['_id'], 'available': True}))
+    
+    if not clothing_items:
+        return jsonify({'error': 'No clothing items found for user'}), 404
+    
+    # Extract id, description, and frequency fields for each clothing item
+    clothing_items = [{'id': str(item['_id']), 'description': item['description'], 'frequency': item['frequency']} for item in clothing_items]
+    
+    # Collect user's age and gender from the database
+    user_dob = user.get('dob')
+    if not user_dob:
+        return jsonify({'error': 'User date of birth is required'}), 400
+    # Calculate user's age
+    user_dob = datetime.datetime.strptime(user_dob, '%Y-%m-%d')
+    user_age = (datetime.datetime.now() - user_dob).days // 365
+    user_gender = user.get('gender')
+    if not user_dob or not user_gender:
+        return jsonify({'error': 'User date of birth and gender are required'}), 400
+    
+    prompt = "You are a fashion expert. The user will ask you fashion questions and shopping suggestions. You answer their quetsions. Their gender is" + user_gender + " and their age is " + user_age + ". Here is their wardrobe info: " + str(clothing_items) + "Here is their question: " + request.json.get('prompt')
 
     try:
         result = query_gemini(prompt)
