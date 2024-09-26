@@ -231,21 +231,27 @@ def convert_objectid_to_str(item):
 @app.route('/clothing_items', methods=['GET'])
 @jwt_required()
 def get_clothing_item():
-    # print('start')
     email = get_jwt_identity()
-    clothing_item_id = request.json.get('clothing_item_id')
-    # print(clothing_item_id)
     
-    # Find the clothing item by its ID
-    item = db.clothing_items.find_one({'_id': ObjectId(clothing_item_id)})
-    # print(item)
-    if not item:
-        return jsonify({'error': 'Clothing item not found'}), 404
+    # Extract the clothing_item_id from query parameters
+    clothing_item_id = request.args.get('clothing_item_id')
     
-    # Convert the ObjectId fields to strings
-    item = convert_objectid_to_str(item)
-    # print(item)
-    return jsonify(item)
+    if not clothing_item_id:
+        return jsonify({'error': 'clothing_item_id is required'}), 400
+    
+    try:
+        # Find the clothing item by its ID
+        item = db.clothing_items.find_one({'_id': ObjectId(clothing_item_id), 'email': email})
+        
+        if not item:
+            return jsonify({'error': 'Clothing item not found'}), 404
+        
+        # Convert the ObjectId fields to strings
+        item = convert_objectid_to_str(item)
+        return jsonify(item)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # get all clothing items for the user
 @app.route('/wardrobe', methods=['GET'])
