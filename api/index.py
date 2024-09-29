@@ -160,7 +160,50 @@ def add_preferences():
     except Exception as e:
         return error_stack(str(e))
 
+# weather
+@app.route('/get_weather', methods=['GET'])
+@jwt_required()
+def get_weather():
+    try:
+        # Get the user's location from the request
+        location = request.json.get('location')
+        if not location:
+            return jsonify({'error': 'Location is required'}), 400
 
+        # Fetch weather data from OpenWeatherMap API
+        weather_api_key = os.getenv('OPENWEATHERMAP_API_KEY')
+        weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={weather_api_key}&units=metric"
+        weather_response = requests.get(weather_url)
+        weather_data = str(weather_response.json())
+
+        if weather_response.status_code != 200:
+            return jsonify({'error': 'Failed to fetch weather data'}), 500
+
+        # Use Gemini to summarize the weather data
+        prompt = f"Summarize the following weather data into brief description(idealy 2 densely info packed sentences) and the average temperature, return a json with weather_description and temperature: {weather_data}"
+        summary = query_gemini(prompt)
+
+        # Check if the returned summary is a dict, if so, use it directly
+        if isinstance(summary, dict):
+            weather_summary = summary
+        else:
+            # If the summary is a string, parse it as JSON
+            weather_summary = json.loads(summary)
+        
+        print(weather_summary)
+
+        weather_description = weather_summary.get('weather_description')
+        temperature = weather_summary.get('temperature')
+
+        return jsonify({
+            'weather_description': weather_description,
+            'temperature': temperature
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    
 # clothing item routes ---
 @app.route('/add_clothing_item', methods=['POST'])
 @jwt_required()
@@ -632,6 +675,7 @@ def query_gemini(prompt):
         json_content = match.group(1).strip()
         try:
             result = json.loads(json_content)
+            print(result)
             return result
         except json.JSONDecodeError:
             return {"error": "Invalid JSON in response"}
