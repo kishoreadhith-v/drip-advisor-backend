@@ -176,8 +176,10 @@ def get_weather():
         weather_response = requests.get(weather_url)
         weather_data = str(weather_response.json())
 
+
+
         if weather_response.status_code != 200:
-            return jsonify({'error': 'Failed to fetch weather data'}), 500
+            return jsonify({'error': 'Failed to fetch weather data', 'message': weather_response}), 403
 
         # Use Gemini to summarize the weather data
         prompt = f"Summarize the following weather data into brief description(idealy 2 densely info packed sentences) and the average temperature, return a json with weather_description and temperature: {weather_data}"
