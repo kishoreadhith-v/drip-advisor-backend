@@ -53,7 +53,7 @@ def env():
 
 @app.route('/test_get', methods=['GET'])
 def test_get():
-    users = db.users.find()
+    users = db.test_get.find()
     userlist = list(users)
     for user in userlist:
         del user['_id']
@@ -161,7 +161,7 @@ def add_preferences():
         return error_stack(str(e))
 
 # weather
-@app.route('/get_weather', methods=['GET'])
+@app.route('/get_weather', methods=['POST'])
 @jwt_required()
 def get_weather():
     try:
