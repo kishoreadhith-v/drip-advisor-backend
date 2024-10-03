@@ -182,7 +182,7 @@ def get_weather():
             return jsonify({'error': 'Failed to fetch weather data', 'message': weather_response}), 403
 
         # Use Gemini to summarize the weather data
-        prompt = f"Summarize the following weather data into brief description(idealy 2 densely info packed sentences) and the average temperature, return a json with weather_description and temperature: {weather_data}"
+        prompt = f"Summarize the following weather data into brief description(idealy 2 densely info packed sentences, include info that would be useful to decide what clothing to wear for the day) and the average temperature, return a json with weather_description and temperature: {weather_data}"
         summary = query_gemini(prompt)
 
         # Check if the returned summary is a dict, if so, use it directly
